@@ -210,7 +210,7 @@ async def main():
             f'Found {len(pilgrims_by_email)} pilgrims ' +
             'with distinct email addresses!')
         stats = Stats()
-        email_chunks = list(get_chunks(pilgrims_by_email.keys(), 20))
+        email_chunks = list(get_chunks(list(pilgrims_by_email.keys()), 20))
         for idx, email_chunk in enumerate(email_chunks):
             logger.info(
                 f'Processing batch {idx+1} of {len(email_chunks)} batches')
