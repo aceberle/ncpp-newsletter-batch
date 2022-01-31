@@ -1,0 +1,1 @@
+0 8 * * * python /usr/src/app/sync_subscriptions.py prod-dir >> /var/log/sync-subscriptions-cron.log 2>&1

@@ -29,7 +29,7 @@ def get_client_session(
         if(current_attempt > 1):
             logger.warning(
                 f'::warn ::Retry Attempt #{current_attempt} ' +
-                f'of {max_tries}: {params.url}')
+                f'of {max_tries}: {params.method} {params.url}')
     trace_config = TraceConfig()
     trace_config.on_request_start.append(_on_request_start)
     limit_per_host = max(0, connect_limit_per_host)

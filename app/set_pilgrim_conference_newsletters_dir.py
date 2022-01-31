@@ -5,6 +5,7 @@ import json
 import asyncio
 from dotenv import load_dotenv
 import helpers.directory as directory
+from helpers.chunker import get_chunks
 
 load_dotenv()
 
@@ -61,13 +62,6 @@ async def update_pilgim_conf_subscriptions(
         )
     else:
         return f'Skipping pilgrim id {pilgrim_id}, no newsletters to add'
-
-
-# Adapted from: https://stackoverflow.com/a/312464/3113344
-def get_chunks(lst, n):
-    """Yield successive n-sized chunks from lst."""
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
 
 
 async def main():

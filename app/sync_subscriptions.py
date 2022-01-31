@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from aiohttp import ClientResponseError
 import helpers.sendernet as sendernet
 import helpers.directory as directory
+from helpers.chunker import get_chunks
 
 load_dotenv()
 
@@ -29,6 +30,7 @@ class Stats(object):
 
 
 def update_payload(payload, fieldname, expected_value, subscriber=None):
+    expected_value = expected_value.strip()
     if(subscriber is None or subscriber[fieldname] != expected_value):
         payload[fieldname] = expected_value
 
@@ -207,37 +209,41 @@ async def main():
         logger.info(
             f'Found {len(pilgrims_by_email)} pilgrims ' +
             'with distinct email addresses!')
-        populate_pilgrim_data_tasks = []
-        for email in pilgrims_by_email:
-            pilgrims = pilgrims_by_email[email]
-            pilgrims.sort(key=lambda pilgrim: int(pilgrim['pilgrim_id']))
-            pilgrim = pilgrims[0]
-            populate_pilgrim_data_tasks.append(
-                asyncio.create_task(
-                    populate_additional_pilgrim_data(session, pilgrim)))
-        update_subscriber_tasks = []
         stats = Stats()
-        for task in asyncio.as_completed(populate_pilgrim_data_tasks):
-            pilgrim = await task
-            pilgrim['group_ids'] = set()
-            for newsletter in pilgrim['newsletters']:
-                title = newsletter['newsletter_label']
-                group_id = newsletter_group_ids_by_title[title]
-                pilgrim['group_ids'].add(group_id)
+        email_chunks = list(get_chunks(pilgrims_by_email.keys(), 20))
+        for idx, email_chunk in enumerate(email_chunks):
             logger.info(
-                'Found %s newsletter groups for pilgrim id %s',
-                len(pilgrim['group_ids']),
-                pilgrim['pilgrim_id'])
-            update_subscriber_tasks.append(
-                asyncio.create_task(
-                    update_subscriber(
-                        stats, session, pilgrim, field_name_by_title)))
-        for task in asyncio.as_completed(update_subscriber_tasks):
-            pilgrim, result = await task
-            logger.info(
-                'Finished processing subscriber "%s" with result "%s"',
-                pilgrim['email'],
-                result)
+                f'Processing batch {idx+1} of {len(email_chunks)} batches')
+            populate_pilgrim_data_tasks = []
+            for email in email_chunk:
+                pilgrims = pilgrims_by_email[email]
+                pilgrims.sort(key=lambda pilgrim: int(pilgrim['pilgrim_id']))
+                pilgrim = pilgrims[0]
+                populate_pilgrim_data_tasks.append(
+                    asyncio.create_task(
+                        populate_additional_pilgrim_data(session, pilgrim)))
+            update_subscriber_tasks = []
+            for task in asyncio.as_completed(populate_pilgrim_data_tasks):
+                pilgrim = await task
+                pilgrim['group_ids'] = set()
+                for newsletter in pilgrim['newsletters']:
+                    title = newsletter['newsletter_label']
+                    group_id = newsletter_group_ids_by_title[title]
+                    pilgrim['group_ids'].add(group_id)
+                logger.info(
+                    'Found %s newsletter groups for pilgrim id %s',
+                    len(pilgrim['group_ids']),
+                    pilgrim['pilgrim_id'])
+                update_subscriber_tasks.append(
+                    asyncio.create_task(
+                        update_subscriber(
+                            stats, session, pilgrim, field_name_by_title)))
+            for task in asyncio.as_completed(update_subscriber_tasks):
+                pilgrim, result = await task
+                logger.info(
+                    'Finished processing subscriber "%s" with result "%s"',
+                    pilgrim['email'],
+                    result)
         logger.info(
             "Results: %s created, %s updated, %s no updates, %s errors",
             stats.created.value,

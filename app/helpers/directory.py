@@ -5,6 +5,9 @@ from aiohttp_retry import asyncio
 from google.oauth2 import service_account  # type: ignore
 import google.auth.transport.requests  # type: ignore
 import logging
+import os
+import base64
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,8 +32,11 @@ POST = 'POST'
 
 
 async def _fetch_token(session):
-    credentials = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    encoded = os.getenv('GOOGLE_ACCOUNT_CREDS')
+    decoded = base64.b64decode(encoded)
+    account_info = json.loads(decoded.decode('ascii'))
+    credentials = service_account.Credentials.from_service_account_info(
+            account_info, scopes=SCOPES)
     request = google.auth.transport.requests.Request()
     credentials.refresh(request)
     logger.info('Fetched google token: ' + credentials.token)
