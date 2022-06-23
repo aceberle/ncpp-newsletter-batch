@@ -29,6 +29,7 @@ CI_COOKIE = 'ci_session'
 GET = 'GET'
 PUT = 'PUT'
 POST = 'POST'
+DELETE = 'DELETE'
 
 
 async def _fetch_token(session):
@@ -39,7 +40,7 @@ async def _fetch_token(session):
             account_info, scopes=SCOPES)
     request = google.auth.transport.requests.Request()
     credentials.refresh(request)
-    logger.info('Fetched google token: ' + credentials.token)
+    # logger.info('Fetched google token: ' + credentials.token)
     payload = {
         'google_token': credentials.token
     }
@@ -97,6 +98,23 @@ async def get_weeks(session):
 
 async def get_conferences(session):
     url = f'{DIRECTORY_ROOL_URL}/conferences'
+    return await do_call(session, GET, url)
+
+
+async def get_pilgrim_ids_to_sync(session):
+    url = f'{DIRECTORY_ROOL_URL}/newsletter-sub-sync'
+    return await do_call(session, GET, url)
+
+
+async def clear_pilgrim_ids_to_sync(session, pilgrim_ids):
+    url = f'{DIRECTORY_ROOL_URL}/newsletter-sub-sync'
+    return await do_call(session, DELETE, url, json={
+        'pilgrim_ids': pilgrim_ids
+    })
+
+
+async def get_pilgrim(session, pilgrim_id):
+    url = f'{DIRECTORY_ROOL_URL}/pilgrims/{pilgrim_id}'
     return await do_call(session, GET, url)
 
 
