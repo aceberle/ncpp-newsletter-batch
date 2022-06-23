@@ -1,5 +1,6 @@
-from helpers.clientsession import get_client_session
+import helpers.init_log
 import logging
+from helpers.clientsession import get_client_session
 import asyncio
 import re
 import json
@@ -8,11 +9,9 @@ from aiohttp import ClientResponseError
 import helpers.sendernet as sendernet
 import helpers.directory as directory
 from helpers.chunker import get_chunks
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class Counter(object):
@@ -177,79 +176,106 @@ async def get_newsletter_group_ids_by_title(session, newsletters, groups):
     return newsletter_group_ids_by_title
 
 
+async def get_pilgrims(session, pilgrim_ids):
+    logger.info('Fetching pilgrim information to sync...')
+    pilgrims = []
+    tasks = []
+    for pilgrim_id in pilgrim_ids:
+        tasks.append(
+            asyncio.create_task(
+                directory.get_pilgrim(session, pilgrim_id)
+            )
+        )
+    for task in asyncio.as_completed(tasks):
+        pilgrims.append(await task)
+    return pilgrims
+
+
+async def do_updates(session, pilgrim_ids):
+    newsletters, groups = await asyncio.gather(
+        directory.get_newsletters(session),
+        sendernet.get_groups(session)
+    )
+    newsletter_group_ids_by_title = \
+        await get_newsletter_group_ids_by_title(
+            session, newsletters, groups)
+    logger.info(
+        f'Found {len(newsletter_group_ids_by_title)} newsletter groups!')
+    # fetch fields
+    field_name_by_title = await get_field_name_by_title(session)
+    logger.info(f'Found {len(field_name_by_title)} fields!')
+    pilgrims = await get_pilgrims(session, pilgrim_ids)
+    logger.info(f'Found {len(pilgrims)} pilgrims!')
+    pilgrims = list(
+        filter(
+            lambda pilgrim: pilgrim['email'] and pilgrim['email'].strip(),
+            pilgrims))
+    logger.info(f'Found {len(pilgrims)} pilgrims with email addresses!')
+    pilgrims_by_email = {}
+    for pilgrim in pilgrims:
+        email = pilgrim['email'].lower().strip()
+        pilgrim['email'] = email
+        pilgrims_by_email[email] = \
+            [] if email not in pilgrims_by_email \
+            else pilgrims_by_email[email]
+        pilgrims_by_email[email].append(pilgrim)
+    logger.info(
+        f'Found {len(pilgrims_by_email)} pilgrims ' +
+        'with distinct email addresses!')
+    stats = Stats()
+    email_chunks = list(get_chunks(list(pilgrims_by_email.keys()), 20))
+    for idx, email_chunk in enumerate(email_chunks):
+        logger.info(
+            f'Processing batch {idx+1} of {len(email_chunks)} batches')
+        populate_pilgrim_data_tasks = []
+        for email in email_chunk:
+            pilgrims = pilgrims_by_email[email]
+            pilgrims.sort(key=lambda pilgrim: int(pilgrim['pilgrim_id']))
+            pilgrim = pilgrims[0]
+            populate_pilgrim_data_tasks.append(
+                asyncio.create_task(
+                    populate_additional_pilgrim_data(session, pilgrim)))
+        update_subscriber_tasks = []
+        for task in asyncio.as_completed(populate_pilgrim_data_tasks):
+            pilgrim = await task
+            pilgrim['group_ids'] = set()
+            for newsletter in pilgrim['newsletters']:
+                title = newsletter['newsletter_label']
+                group_id = newsletter_group_ids_by_title[title]
+                pilgrim['group_ids'].add(group_id)
+            logger.info(
+                'Found %s newsletter groups for pilgrim id %s',
+                len(pilgrim['group_ids']),
+                pilgrim['pilgrim_id'])
+            update_subscriber_tasks.append(
+                asyncio.create_task(
+                    update_subscriber(
+                        stats, session, pilgrim, field_name_by_title)))
+        for task in asyncio.as_completed(update_subscriber_tasks):
+            pilgrim, result = await task
+            logger.info(
+                'Finished processing subscriber "%s" with result "%s"',
+                pilgrim['email'],
+                result)
+    logger.info(
+        "Results: %s created, %s updated, %s no updates, %s errors",
+        stats.created.value,
+        stats.updated.value,
+        stats.not_updated.value,
+        stats.errors.value)
+
+
 async def main():
     async with get_client_session() as session:
-        newsletters, groups = await asyncio.gather(
-            directory.get_newsletters(session),
-            sendernet.get_groups(session)
-        )
-        newsletter_group_ids_by_title = \
-            await get_newsletter_group_ids_by_title(
-                session, newsletters, groups)
-        logger.info(
-            f'Found {len(newsletter_group_ids_by_title)} newsletter groups!')
-        # fetch fields
-        field_name_by_title = await get_field_name_by_title(session)
-        logger.info(f'Found {len(field_name_by_title)} fields!')
-        pilgrims = await directory.get_pilgrims(session)
-        logger.info(f'Found {len(pilgrims)} pilgrims!')
-        pilgrims = list(
-            filter(
-                lambda pilgrim: pilgrim['email'] and pilgrim['email'].strip(),
-                pilgrims))
-        logger.info(f'Found {len(pilgrims)} pilgrims with email addresses!')
-        pilgrims_by_email = {}
-        for pilgrim in pilgrims:
-            email = pilgrim['email'].lower().strip()
-            pilgrim['email'] = email
-            pilgrims_by_email[email] = \
-                [] if email not in pilgrims_by_email \
-                else pilgrims_by_email[email]
-            pilgrims_by_email[email].append(pilgrim)
-        logger.info(
-            f'Found {len(pilgrims_by_email)} pilgrims ' +
-            'with distinct email addresses!')
-        stats = Stats()
-        email_chunks = list(get_chunks(list(pilgrims_by_email.keys()), 20))
-        for idx, email_chunk in enumerate(email_chunks):
-            logger.info(
-                f'Processing batch {idx+1} of {len(email_chunks)} batches')
-            populate_pilgrim_data_tasks = []
-            for email in email_chunk:
-                pilgrims = pilgrims_by_email[email]
-                pilgrims.sort(key=lambda pilgrim: int(pilgrim['pilgrim_id']))
-                pilgrim = pilgrims[0]
-                populate_pilgrim_data_tasks.append(
-                    asyncio.create_task(
-                        populate_additional_pilgrim_data(session, pilgrim)))
-            update_subscriber_tasks = []
-            for task in asyncio.as_completed(populate_pilgrim_data_tasks):
-                pilgrim = await task
-                pilgrim['group_ids'] = set()
-                for newsletter in pilgrim['newsletters']:
-                    title = newsletter['newsletter_label']
-                    group_id = newsletter_group_ids_by_title[title]
-                    pilgrim['group_ids'].add(group_id)
-                logger.info(
-                    'Found %s newsletter groups for pilgrim id %s',
-                    len(pilgrim['group_ids']),
-                    pilgrim['pilgrim_id'])
-                update_subscriber_tasks.append(
-                    asyncio.create_task(
-                        update_subscriber(
-                            stats, session, pilgrim, field_name_by_title)))
-            for task in asyncio.as_completed(update_subscriber_tasks):
-                pilgrim, result = await task
-                logger.info(
-                    'Finished processing subscriber "%s" with result "%s"',
-                    pilgrim['email'],
-                    result)
-        logger.info(
-            "Results: %s created, %s updated, %s no updates, %s errors",
-            stats.created.value,
-            stats.updated.value,
-            stats.not_updated.value,
-            stats.errors.value)
+        pilgrim_ids_to_sync = await directory.get_pilgrim_ids_to_sync(session)
+        pilgrim_ids = pilgrim_ids_to_sync['pilgrim_ids']
+        num_pilgrim_ids = len(pilgrim_ids)
+        logger.info(f'Found {num_pilgrim_ids} pilgrim id(s) to process')
+        if(num_pilgrim_ids):
+            await do_updates(session, pilgrim_ids)
+            logger.info('Clearing pilgrim ids...')
+            await directory.clear_pilgrim_ids_to_sync(session, pilgrim_ids)
+        logger.info('Done')
 
 
 asyncio.run(main())
