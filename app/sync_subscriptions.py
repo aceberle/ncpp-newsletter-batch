@@ -1,4 +1,4 @@
-import helpers.init_log
+from helpers.init_log import init_log
 import logging
 from helpers.clientsession import get_client_session
 import asyncio
@@ -11,6 +11,7 @@ import helpers.directory as directory
 from helpers.chunker import get_chunks
 logger = logging.getLogger(__name__)
 
+init_log()
 load_dotenv()
 
 
